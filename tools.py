@@ -70,7 +70,47 @@ def search_listings(
     Before writing code, fill in the Tool 1 section of planning.md.
     """
     # Replace this with your implementation
-    return []
+    try:
+        listings = load_listings()
+    except Exception:
+        return []
+ 
+    # --- Step 1: filter by price ---
+    if max_price is not None:
+        listings = [l for l in listings if l["price"] <= max_price]
+ 
+    # --- Step 2: filter by size (case-insensitive, partial match) ---
+    if size is not None:
+        size_lower = size.lower().strip()
+        listings = [
+            l for l in listings
+            if size_lower in l["size"].lower()
+        ]
+ 
+    # --- Step 3: score by keyword overlap ---
+    keywords = set(re.sub(r"[^\w\s]", "", description.lower()).split())
+ 
+    def score(listing: dict) -> int:
+        # Build a bag of words from all searchable fields
+        text_parts = [
+            listing.get("title", ""),
+            listing.get("description", ""),
+            listing.get("category", ""),
+            listing.get("brand", "") or "",
+            " ".join(listing.get("style_tags", [])),
+            " ".join(listing.get("colors", [])),
+        ]
+        listing_words = set(
+            re.sub(r"[^\w\s]", "", " ".join(text_parts).lower()).split()
+        )
+        return len(keywords & listing_words)
+ 
+    # --- Step 4: drop zero-score results, sort by score ---
+    scored = [(l, score(l)) for l in listings]
+    matched = [(l, s) for l, s in scored if s > 0]
+    matched.sort(key=lambda x: x[1], reverse=True)
+ 
+    return [l for l, _ in matched]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -101,7 +141,78 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
     Before writing code, fill in the Tool 2 section of planning.md.
     """
     # Replace this with your implementation
-    return ""
+    try:
+        client = _get_groq_client()
+        wardrobe_items = wardrobe.get("items", [])
+ 
+        if not wardrobe_items:
+            # Empty wardrobe — general styling advice
+            prompt = f"""You are a thrift fashion stylist. A user just found this secondhand item:
+ 
+Item: {new_item.get('title', 'Unknown item')}
+Category: {new_item.get('category', '')}
+Style tags: {', '.join(new_item.get('style_tags', []))}
+Colors: {', '.join(new_item.get('colors', []))}
+Description: {new_item.get('description', '')}
+ 
+The user hasn't entered their wardrobe yet. Give them 1-2 paragraphs of general styling advice:
+- What types of bottoms, tops, or shoes pair well with this item
+- What overall aesthetic or vibe it suits
+- One specific outfit idea using common wardrobe basics
+ 
+Be specific, casual, and helpful. Don't use bullet points — write in a conversational style."""
+        else:
+            # Format wardrobe for the prompt
+            wardrobe_lines = []
+            for item in wardrobe_items:
+                colors = ", ".join(item.get("colors", []))
+                tags = ", ".join(item.get("style_tags", []))
+                notes = item.get("notes") or ""
+                line = f"- {item['name']} ({item['category']}) | colors: {colors} | style: {tags}"
+                if notes:
+                    line += f" | note: {notes}"
+                wardrobe_lines.append(line)
+ 
+            wardrobe_text = "\n".join(wardrobe_lines)
+ 
+            prompt = f"""You are a thrift fashion stylist. A user just found this secondhand item:
+ 
+            Item: {new_item.get('title', 'Unknown item')}
+            Category: {new_item.get('category', '')}
+            Style tags: {', '.join(new_item.get('style_tags', []))}
+            Colors: {', '.join(new_item.get('colors', []))}
+            Description: {new_item.get('description', '')}
+            
+            Their current wardrobe:
+            {wardrobe_text}
+            
+            Suggest 1-2 complete outfit combinations using the new item and specific pieces from their wardrobe above. 
+            Reference the wardrobe pieces by name. Be specific about how to style it (tucked/untucked, layering, etc.).
+            Write in a casual, friendly style — 2-3 sentences per outfit. No bullet points."""
+ 
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.7,
+            )
+ 
+            result = response.choices[0].message.content.strip()
+            if not result:
+                raise ValueError("Empty LLM response")
+            return result
+    
+        except Exception as e:
+            # Fallback — never crash
+            category = new_item.get("category", "item")
+            tags = new_item.get("style_tags", [])
+            vibe = tags[0] if tags else "versatile"
+            return (
+                f"This {vibe} {category} works well with a range of basics. "
+                f"Try pairing it with fitted or relaxed bottoms depending on the silhouette, "
+                f"and finish with clean sneakers or boots to match the vibe."
+            )
+    
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
