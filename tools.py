@@ -220,6 +220,8 @@ Be specific, casual, and helpful. Don't use bullet points — write in a convers
 def create_fit_card(outfit: str, new_item: dict) -> str:
     """
     Generate a short, shareable outfit caption for the thrifted find.
+    Returns a 2-4 sentence casual social-media style caption.
+    If outfit is empty, returns an error string. Never raises an exception.
 
     Args:
         outfit:   The outfit suggestion string from suggest_outfit().
@@ -245,4 +247,48 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     Before writing code, fill in the Tool 3 section of planning.md.
     """
     # Replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return "Cannot generate fit card: outfit description is missing."
+ 
+    try:
+        client = _get_groq_client()
+ 
+        title = new_item.get("title", "thrifted piece")
+        price = new_item.get("price", "")
+        platform = new_item.get("platform", "a thrift app")
+        price_str = f"${price:.0f}" if price else ""
+ 
+        prompt = f"""Write a 2-4 sentence Instagram/TikTok caption for a thrift haul OOTD post. 
+ 
+The thrifted item: {title} ({price_str} from {platform})
+The outfit: {outfit}
+ 
+Rules:
+- Sound like a real person posting on Instagram, not a brand or product description
+- Mention the item name, price, and platform naturally (once each)
+- Capture the specific vibe of the outfit
+- Keep it casual, a little playful — lowercase is fine, emojis are fine but don't overdo it
+- 2-4 sentences max
+ 
+Write only the caption, nothing else."""
+ 
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.95,  # higher temp = more variation
+        )
+ 
+        result = response.choices[0].message.content.strip()
+        # Strip any surrounding quotes the LLM might add
+        result = result.strip('"\'')
+        if not result:
+            raise ValueError("Empty LLM response")
+        return result
+ 
+    except Exception:
+        title = new_item.get("title", "this find")
+        price = new_item.get("price", "")
+        platform = new_item.get("platform", "thrift")
+        price_str = f"${price:.0f}" if price else ""
+        return f"thrifted {title.lower()} {price_str} from {platform} and honestly it's everything "
