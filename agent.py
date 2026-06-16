@@ -17,7 +17,7 @@ Usage (once implemented):
     print(result["fit_card"])
     print(result["error"])   # None on success
 """
-
+import re
 from tools import search_listings, suggest_outfit, create_fit_card
 
 
@@ -94,7 +94,62 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     """
     # TODO: implement the planning loop
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+    text = query.lower()
+    max_price = None
+    for pattern in [
+        r"under\s+\$?([\d]+(?:\.\d+)?)",
+        r"less\s+than\s+\$?([\d]+(?:\.\d+)?)",
+        r"\$?([\d]+(?:\.\d+)?)\s+(?:max|maximum|or less)",
+        r"max(?:imum)?\s+\$?([\d]+(?:\.\d+)?)",
+    ]:
+        match = re.search(pattern, text)
+        if match:
+            max_price = float(match.group(1))
+            break
+
+    # Extract size — patterns like "size M", "size XL", standalone size tokens
+    size = None
+    size_match = re.search(
+        r"\b(?:size\s+)?([xX]{0,2}[sSlLmM](?:/[xX]{0,2}[sSlLmM])?|[xX][xX][lLsS]|one\s+size)\b",
+        query
+    )
+    if size_match:
+        size = size_match.group(1).strip()
+
+    # Build description by removing price and size phrases
+    description = query
+    description = re.sub(r"(?:under|less\s+than|max(?:imum)?)\s*\$?[\d]+(?:\.\d+)?", "", description, flags=re.IGNORECASE)
+    description = re.sub(r"\$[\d]+(?:\.\d+)?(?:\s*(?:max|maximum|or less))?", "", description)
+    description = re.sub(r"\b(?:size\s+)?(?:[xX]{0,2}[sSlLmM](?:/[xX]{0,2}[sSlLmM])?|[xX][xX][lLsS]|one\s+size)\b", "", description, flags=re.IGNORECASE)
+    description = re.sub(r"\b(i(?:'m|\s+am)?\s+looking\s+for|i\s+want|find\s+me|show\s+me|a|an|the|in|for)\b", " ", description, flags=re.IGNORECASE)
+    description = re.sub(r"\s+", " ", description).strip(" ,.")
+    if not description:
+        description = query
+
+    session["parsed"] = {"description": description, "size": size, "max_price": max_price}
+    results = search_listings(description, size, max_price)
+    session["search_results"] = results
+    if not results:
+        parts = [f"'{description}'"]
+        if size:
+            parts.append(f"in size {size}")
+        if max_price is not None:
+            parts.append(f"under ${max_price:.0f}")
+        session["error"] = (
+            f"No listings found for {' '.join(parts)}. "
+            f"Try a broader description, a different size, or a higher price limit."
+        )
+        return session
+    #  Select the top result
+    session["selected_item"] = results[0]
+
+    #Suggest outfit using selected item and wardrobe
+    session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
+
+    # Create fit card from outfit suggestion and selected item
+    session["fit_card"] = create_fit_card(session["outfit_suggestion"], session["selected_item"])
+
+    #Return completed session
     return session
 
 
